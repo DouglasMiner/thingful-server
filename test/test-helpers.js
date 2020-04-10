@@ -1,4 +1,5 @@
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken')
 
 function makeUsersArray() {
   return [
@@ -247,15 +248,21 @@ function seedUsers(db, users) {
 }
 
 function seedThingsTables(db, users, things, reviews=[]) {
-  return seedUsers(db, users)
-    .then(() =>
-      db
-        .into('thingful_things')
-        .insert(things)
+  return db.transaction(async trx => {
+    await seedUsers(trx, users)
+    await trx.into('thingful_things').insert(things)
+    await trx.raw(
+      `SELECT setval('thingful_things_id_seq', ?)`,
+      [things[things.length -1].id],
     )
-    .then(() =>
-      reviews.length && db.into('thingful_reviews').insert(reviews)
-    )
+    if (reviews.length) {
+      await trx.into('thingful_reviews').insert(reviews)
+      await trx.raw(
+        `SELECT setval('thingful_reviews_id_seq', ?)`,
+        [reviews[reviews.length -1].id],
+      )
+    }
+  })
 }
 
 function seedMaliciousThing(db, user, thing) {
@@ -267,9 +274,12 @@ function seedMaliciousThing(db, user, thing) {
     )
 }
 
-function makeAuthHeader(user) {
-  const token = Buffer.from(`${user.user_name}:${user.password}`).toString('base64')
-  return `Basic ${token}`
+function makeAuthHeader(user, secret = process.env.JWT_SECRET) {
+  const token = jwt.sign({ user_id: user.id }, secret, {
+    subject: user.user_name,
+    algorithm: 'HS256'
+  })
+  return `Bearer ${token}`
 }
 
 module.exports = {
